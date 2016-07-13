@@ -221,12 +221,15 @@
           .text(item.title)
           .appendTo($li);
       }
-
-
-      // Position the menu.
-      $menu
-        .offset({ top: $(this).offset().top + $(this).height(), left: $(this).offset().left });
-
+      
+      function offsetClosure(thisObj){
+          setTimeout(function () { 
+          // Position the menu.
+              $menu
+                .offset({ top: thisObj.offset().top + thisObj.height(), left: thisObj.offset().left });
+          }, 100);
+      };
+      offsetClosure($(this));
 
       // Mark the header as active to keep the highlighting.
       $activeHeaderColumn = $menuButton.closest(".slick-header-column");
@@ -269,7 +272,8 @@
       "destroy": destroy,
 
       "onBeforeMenuShow": new Slick.Event(),
-      "onCommand": new Slick.Event()
+      "onCommand": new Slick.Event(),
+        "hideMenu": hideMenu
     });
   }
 })(jQuery);
