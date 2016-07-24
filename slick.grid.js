@@ -17,7 +17,7 @@
  */
 
 // make sure required JavaScript modules are loaded
-if (typeof jQuery === "undefined") {
+;if (typeof jQuery === "undefined") {
     throw "SlickGrid requires jquery module to be loaded";
 }
 if (!jQuery.fn.drag) {
@@ -28,7 +28,7 @@ if (typeof Slick === "undefined") {
 }
 
 
-(function ($) {
+;(function ($) {
     // Slick.Grid
     $.extend(true, window, {
         Slick: {
@@ -91,7 +91,8 @@ if (typeof Slick === "undefined") {
             multiColumnSort: false,
             defaultFormatter: defaultFormatter,
             forceSyncScrolling: false,
-            addNewRowCssClass: "new-row"
+            addNewRowCssClass: "new-row",
+            defaultAriaAttr: defaultAriaAttr
         };
 
         var columnDefaults = {
@@ -123,6 +124,7 @@ if (typeof Slick === "undefined") {
         var uid = "slickgrid_" + Math.round(1000000 * Math.random());
         var self = this;
         var $focusSink, $focusSink2;
+        var $ariaLive;
         var $headerScroller;
         var $headers;
         var $headerRow, $headerRowScroller, $headerRowSpacer;
@@ -170,7 +172,9 @@ if (typeof Slick === "undefined") {
         var columnPosLeft = [];
         var columnPosRight = [];
 
-        var isHeaderMenuVisible = false;
+        var isNavigatedOnFocus = false;
+        var isAriaDescriptionRead = false;
+        var ariaDescriptionReadTimer;
 
 
         // async call handles
@@ -254,7 +258,9 @@ if (typeof Slick === "undefined") {
                 $container.css("position", "relative");
             }
 
+            $ariaLive = $("<div class='sr-only' aria-live='polite'></div>").appendTo($container);
             $focusSink = $("<div tabIndex='0' hideFocus style='position:fixed;width:0;height:0;top:0;left:0;outline:0;'></div>").appendTo($container);
+       
 
             $headerScroller = $("<div class='slick-header ui-state-default' style='overflow:hidden;position:relative;' />").appendTo($container);
             $headers = $("<div class='slick-header-columns' style='left:-1000px' />").appendTo($headerScroller);
@@ -299,6 +305,8 @@ if (typeof Slick === "undefined") {
             if (!options.explicitInitialization) {
                 finishInitialization();
             }
+
+            setTimeout(function () { $('.' + uid).css('display', 'block'); },0);
         }
 
         function finishInitialization() {
@@ -353,7 +361,8 @@ if (typeof Slick === "undefined") {
 
                 $focusSink.add($focusSink2)
                     .bind("keydown", handleKeyDown)
-                    .bind("focus", handleFocusSink);
+                    .bind("focus", handleFocusSink)
+                    .bind("blur", handleBlurSink);
                 $canvas
                     .bind("keydown", handleKeyDown)
                     .bind("click", handleClick)
@@ -1533,6 +1542,48 @@ if (typeof Slick === "undefined") {
             return item[columnDef.field];
         }
 
+        function defaultAriaAttr(row, cell, value, columnDef, dataContext) {
+            var attrValue = ""
+            if (value != null) {
+                attrValue = (value + "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            }
+            return { "attr": "aria-label", "value": attrValue };
+        }
+
+        function getAriaAttr(row, cell) {
+            var dataContext = getDataItem(row);
+            var columnDef = columns[cell];
+
+            if (dataContext) {
+                var value = getDataItemValueForColumn(dataContext, columnDef);
+                var ariaAttrObj = (columnDef.ariaAttr || options.defaultAriaAttr)(row, cell, value, columnDef, dataContext);
+
+                if (ariaAttrObj == null)
+                    return null;
+
+                var ariaRowColHeader = ""
+
+                if (columns[cell].columnHeader != null) {
+                    if (columns[cell].columnHeader === true) {
+                        ariaRowColHeader = columns[cell].id + ", ";
+                    } else {
+                        ariaRowColHeader = columns[cell].columnHeader + ", ";
+                    }
+                }
+
+                $(columns[cell].rowHeader).each(function (key, value) {
+                    //ariaRowColHeader += rowsCache[row].cellValues[value] + ", ";
+                    ariaRowColHeader += (rowsCache[row].cellValues[value] !== undefined ? rowsCache[row].cellValues[value] + ", " : "");
+                });
+
+                ariaAttrObj.value = ariaRowColHeader + ariaAttrObj.value;
+
+                return ariaAttrObj;
+            }
+
+            return null;
+        }
+
         function appendRowHtml(stringArray, row, range, dataLength) {
             var d = getDataItem(row);
             var dataLoading = row < dataLength && !d;
@@ -1551,7 +1602,7 @@ if (typeof Slick === "undefined") {
                 rowCss += " " + metadata.cssClasses;
             }
 
-            stringArray.push("<div class='ui-widget-content " + rowCss + "' style='top:" + getRowTop(row) + "px'>");
+            stringArray.push("<div id='slick-row-r"+ row  +"' class='ui-widget-content " + rowCss + "' style='top:" + getRowTop(row) + "px'>");
 
             var colspan, m;
             for (var i = 0, ii = columns.length; i < ii; i++) {
@@ -1603,11 +1654,16 @@ if (typeof Slick === "undefined") {
                 }
             }
 
-            stringArray.push("<div class='" + cellCss + "'>");
+            // Prepare Aria Attribute
+            var ariaAttrWrapper = getAriaAttr(row, cell);
+
+            stringArray.push("<div class='" + cellCss + "' " +
+                "id='" + cellCss.replace(/[\s]+/g, '') + 'c' + cell + 'r' + row + "' " +
+                (ariaAttrWrapper ? ariaAttrWrapper.attr + "='" + ariaAttrWrapper.value + "'" : "") + ">");
 
             // if there is a corresponding row (if not, this is the Add New row or this data hasn't been loaded yet)
             if (item) {
-                var value = getDataItemValueForColumn(item, m);
+                var value = rowsCache[row].cellValues[cell]; // getDataItemValueForColumn(item, m);
                 stringArray.push(getFormatter(row, m)(row, cell, value, m, item));
             }
 
@@ -1747,7 +1803,7 @@ if (typeof Slick === "undefined") {
             }
 
             ensureCellNodesInRowsCache(row);
-
+            prePopulateCellValues(row);
             var d = getDataItem(row);
 
             for (var columnIdx in cacheEntry.cellNodesByColumnIdx) {
@@ -1766,6 +1822,12 @@ if (typeof Slick === "undefined") {
                 } else {
                     node.innerHTML = "";
                 }
+
+                /**/
+                // TODO: SET ARIA LABEL AFTER EDIT
+                var ariaAttrWrapper = getAriaAttr(row, columnIdx);
+                if (ariaAttrWrapper)
+                    $(node).attr(ariaAttrWrapper.attr, ariaAttrWrapper.value);
             }
 
             invalidatePostProcessingResults(row);
@@ -2060,6 +2122,18 @@ if (typeof Slick === "undefined") {
             }
         }
 
+        function prePopulateCellValues(row) {
+            /* Item Value for Rows - Prepopulating to add this as row header for Aria */
+            var cellValues = [];
+            $(columns).each(function (key, value) {
+                var item = getDataItem(row);
+                if (item)
+                    cellValues[key] = getDataItemValueForColumn(item, columns[key]);
+            });
+            if (rowsCache[row])
+                rowsCache[row].cellValues = cellValues;
+        }
+
         function renderRows(range) {
             var parentNode = $canvas[0],
                 stringArray = [],
@@ -2073,6 +2147,14 @@ if (typeof Slick === "undefined") {
                 }
                 renderedRows++;
                 rows.push(i);
+
+                ///* Item Value for Rows - Prepopulating to add this as row header for Aria */
+                //var cellValues =[];
+                //$(columns).each(function (key, value) {
+                //    var item = getDataItem(i);
+                //    if (item)
+                //        cellValues[key] = getDataItemValueForColumn(item, columns[key]);
+                //});
 
                 // Create an entry right away so that appendRowHtml() can
                 // start populatating it.
@@ -2089,8 +2171,12 @@ if (typeof Slick === "undefined") {
                     // Column indices of cell nodes that have been rendered, but not yet indexed in
                     // cellNodesByColumnIdx.  These are in the same order as cell nodes added at the
                     // end of the row.
-                    "cellRenderQueue": []
+                    "cellRenderQueue": [],
+
+                    "cellValues": []
                 };
+
+                prePopulateCellValues(i);
 
                 appendRowHtml(stringArray, i, range, dataLength);
                 if (activeCellNode && activeRow === i) {
@@ -2456,69 +2542,15 @@ if (typeof Slick === "undefined") {
 
         function handleKeyDown(e) {
             var keyCode = Slick.keyCode;
-            /* HEADER EVENTS */
-            /* Check if header focus is on then */
-            /*var isHeaderFocus = true;
-            var activeHeaderColumn = 0;
-            if (isHeaderFocus) {
-                if (e.which == keyCode.RIGHT) {
-                    var nextHeaderColumn = getHeaderRowColumn(activeHeaderColumn++);
-                    nextHeaderColumn.addClass('slick-cell').addClass('active')
-                }
-                return;
-            }*/
-            if (!isHeaderMenuVisible && e.altKey && e.which == keyCode.DOWN) {
-                console.dir(activeCell);
-                console.dir(document.activeElement);
-                isHeaderMenuVisible = true;
+        
+            if (e.altKey && e.which == keyCode.DOWN && $headers.children().eq(activeCell).find('.slick-header-menubutton') && !currentEditor) {
+                $focusSink.add($focusSink2).removeAttr('aria-owns').removeAttr('aria-activedescendant');
                 $headers.children().eq(activeCell).find('.slick-header-menubutton').click();
                 return;
             }
-        
-            if (isHeaderMenuVisible) {
-                var $headerMenu = $('.slick-header-menu');
-                var $currentMenuItem = $headerMenu.find('.slick-header-menuitem.active');
-                if (e.which == keyCode.UP || e.which == keyCode.DOWN) {
-                    console.log('up/down ' + e.which);
 
-
-                    if ($headerMenu.find('.slick-header-menuitem.active').length == 0) {
-                        console.log('menu active none');
-                        var firstItemToFocus = 0;
-                        if (e.which == keyCode.UP) firstItemToFocus = -1;
-                        $headerMenu.find('.slick-header-menuitem').eq(firstItemToFocus).addClass('active');
-                    } else {
-                        $currentMenuItem.removeClass('active');
-                        if (e.which == keyCode.DOWN) {
-                            if ($currentMenuItem.next().length) {
-                                $currentMenuItem.next().addClass('active');
-                            } else {
-                                $headerMenu.find('.slick-header-menuitem').eq(0).addClass('active');
-                            }
-                        } else {
-                            if ($currentMenuItem.prev().length) {
-                                $currentMenuItem.prev().addClass('active');
-                            } else {
-                                $headerMenu.find('.slick-header-menuitem').eq(-1).addClass('active');
-                            }
-                        }
-                    }
-                }
-                if (e.which == keyCode.ESCAPE || (e.altKey && e.which == keyCode.UP)) {
-                    isHeaderMenuVisible = false;
-                    plugins[0].hideMenu();
-                }
-                if (e.which == keyCode.ENTER) {
-                    $currentMenuItem.click();
-                }
-                return;
-            }
-
-
-            //debugger;
             trigger(self.onKeyDown, {row: activeRow, cell: activeCell, grid: self}, e);
             var handled = e.isImmediatePropagationStopped();
-            //var keyCode = Slick.keyCode;
 
             if (!handled) {
                 if (!e.shiftKey && !e.altKey && !e.ctrlKey) {
@@ -2548,7 +2580,7 @@ if (typeof Slick === "undefined") {
                     } else if (e.which == keyCode.DOWN) {
                         handled = navigateDown();
                     } else if (e.which == keyCode.TAB) {
-                        handled = navigateNext();
+                        //handled = navigateNext();
                     } else if (e.which == keyCode.ENTER) {
                         if (options.editable) {
                             if (currentEditor) {
@@ -2567,7 +2599,7 @@ if (typeof Slick === "undefined") {
                         handled = true;
                     }
                 } else if (e.which == keyCode.TAB && e.shiftKey && !e.ctrlKey && !e.altKey) {
-                    handled = navigatePrev();
+                    //handled = navigatePrev();
                 }
             }
 
@@ -2684,9 +2716,33 @@ if (typeof Slick === "undefined") {
         }
 
         function handleFocusSink(e) {
+            clearTimeout(ariaDescriptionReadTimer);
             console.log('handleFocusSink');
-            //if (activeCellNode) activeCellNode.focus();
-            console.dir(getCellFromPoint(0, 0));
+            navigateOnFocus("down");
+            $focusSink.add($focusSink2).attr('tabindex', '-1');
+            $(activeCellNode).addClass("active");
+
+            if (currentEditor)
+                currentEditor.focus();
+            $focusSink.add($focusSink2).attr('aria-owns', $(rowsCache[activeRow].rowNode).attr('id')).attr('aria-activedescendant', $(activeCellNode).attr('id'));
+
+            setTimeout(function () {
+                if (!isAriaDescriptionRead) {
+                    isAriaDescriptionRead = true;
+                    $ariaLive.text($('#' + options.ariaDescribedBy).text());
+                }
+            }, 0);
+        }
+
+        function handleBlurSink(e) {
+            console.log('handleFocusBlur');
+            $focusSink.add($focusSink2).attr('tabindex', '0');
+            if (document.activeElement.getAttribute('hideFocus') !== "" || document.activeElement.getAttribute('hideFocus') === null)
+                $(activeCellNode).removeClass("active");
+            $focusSink.add($focusSink2).removeAttr('aria-owns').removeAttr('aria-activedescendant');
+            ariaDescriptionReadTimer = setTimeout(function () {
+                isAriaDescriptionRead = false;
+            }, 100);
         }
 
         function getCellFromPoint(x, y) {
@@ -2821,6 +2877,7 @@ if (typeof Slick === "undefined") {
 
                 $(activeCellNode).addClass("active"); //.attr('tabindex',0).focus();
                 $(rowsCache[activeRow].rowNode).addClass("active");
+                $focusSink.add($focusSink2).attr('aria-owns', $(rowsCache[activeRow].rowNode).attr('id')).attr('aria-activedescendant', $(activeCellNode).attr('id'));
 
                 if (options.editable && opt_editMode && isCellPotentiallyEditable(activeRow, activeCell)) {
                     clearTimeout(h_editorLoader);
@@ -2901,7 +2958,17 @@ if (typeof Slick === "undefined") {
                 clearTextSelection();
             }
 
+            /////**/
+            ////// TODO: SET ARIA LABEL AFTER EDIT
+            ////var ariaAttrWrapper = getAriaAttr(activeRow, activeCell);
+            ////if (ariaAttrWrapper)
+            ////    $(activeCellNode).attr(ariaAttrWrapper.attr, ariaAttrWrapper.value);
+           
+
             getEditorLock().deactivate(editController);
+
+            // Set this to false so that grid description won't be read after returning from Editor
+            isAriaDescriptionRead = true;
         }
 
         function makeActiveCellEditable(editor) {
@@ -2957,6 +3024,9 @@ if (typeof Slick === "undefined") {
             if (currentEditor.position) {
                 handleActiveCellPositionChange();
             }
+
+            // clear aria-label for cell node since the editor content will implement this for sub controls
+            $(activeCellNode).removeAttr('aria-label');
         }
 
         function commitEditAndSetFocus() {
@@ -3365,6 +3435,18 @@ if (typeof Slick === "undefined") {
 
         function navigatePrev() {
             return navigate("prev");
+        }
+
+        function navigateOnFocus(dir) {
+            console.log('naviagateOnFocus');
+            // isNavigatedOnFocus - used to focus the first cell upon grid focus for the first time
+            if (!isNavigatedOnFocus && !activeRow && !activeCell && !activePosX) {
+                isNavigatedOnFocus = true;
+                navigate(dir);
+            }
+            else {
+                setFocus();
+            }
         }
 
         /**
